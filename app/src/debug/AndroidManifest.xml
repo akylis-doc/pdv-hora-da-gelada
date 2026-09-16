@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <application>
+        <!-- SDK beta20 handles authentication/download. Its automatic install entry point
+             is disabled so a finished download can only be installed by an explicit user action. -->
+        <activity android:name="com.google.firebase.appdistribution.impl.InstallActivity"
+            android:enabled="false" />
+        <provider android:name="br.com.bebidaspdv.updates.UpdateFileProvider"
+            android:authorities="${applicationId}.verified-updates"
+            android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_file_paths" />
+        </provider>
+    </application>
+</manifest>

@@ -1,0 +1,429 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function profilePath() { return /databases/$(database)/documents/Perfis/$(request.auth.uid); }
+    function legacy() { return request.auth != null && !exists(profilePath()) && request.auth.token.get('pdv', false) == true; }
+    function operator() { return request.auth != null && (exists(profilePath()) ? get(profilePath()).data.active == true : request.auth.token.get('pdv', false) == true); }
+    function admin() { return request.auth != null && exists(profilePath()) && get(profilePath()).data.active == true && get(profilePath()).data.role == 'admin'; }
+    function permission(name) { return legacy() ? name != 'reverseSales' : operator() && (get(profilePath()).data.role == 'admin' || get(profilePath()).data.permissions[name] == true); }
+    function uuid(value) {
+      return value is string && value.matches('^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
+    }
+    function money(cents) { return cents is int && cents >= 0 && cents <= 99999999; }
+    function decimalMatches(value, cents) {
+      let decimal = cents / 100.0;
+      return value is number && value >= decimal - 0.000001 && value <= decimal + 0.000001;
+    }
+    function productValid(d, id) {
+      return d.keys().hasOnly(['id', 'nome', 'codigo_barras', 'estoque_atual', 'preco_custo_atual', 'preco_venda_atual', 'cost_cents', 'sale_cents', 'ultima_movimentacao', 'indice_ultima_movimentacao', 'imagem', 'ativo', 'estoque_minimo', 'unidades_caixa', 'preco_caixa_cents', 'categoria', 'unidade_venda', 'custo_por_caixa', 'custo_caixa_cents', 'ultimo_estorno', 'indice_ultimo_estorno'])
+        && uuid(id) && d.id == id
+        && d.nome is string && d.nome.size() > 0 && d.nome.size() <= 120
+        && d.codigo_barras is string && d.codigo_barras.size() <= 80
+        && d.estoque_atual is int && d.estoque_atual >= -2147483648 && d.estoque_atual <= 2147483647
+        && money(d.cost_cents) && money(d.sale_cents)
+        && decimalMatches(d.preco_custo_atual, d.cost_cents)
+        && decimalMatches(d.preco_venda_atual, d.sale_cents)
+        && d.get('ativo', true) is bool && imageKey(d.get('imagem', ''))
+        && d.get('estoque_minimo', 5) is int && d.get('estoque_minimo', 5) >= 0 && d.get('estoque_minimo', 5) <= 9999
+        && d.get('unidades_caixa', 1) is int && d.get('unidades_caixa', 1) >= 1 && d.get('unidades_caixa', 1) <= 9999
+        && money(d.get('preco_caixa_cents', 0)) && d.get('categoria', 'OUTROS') in ['BEBIDA', 'ALIMENTO', 'CIGARRO', 'OUTROS']
+        && d.get('unidade_venda', 'UNIDADE') in ['UNIDADE', 'MACO', 'PACOTE'] && d.get('custo_por_caixa', false) is bool
+        && money(d.get('custo_caixa_cents', 0))
+        && (!d.get('custo_por_caixa', false) || d.get('unidades_caixa', 1) > 1
+          && d.cost_cents == int(math.round(d.get('custo_caixa_cents', 0) / (d.unidades_caixa * 1.0))));
+    }
+    function imageKey(key) { return key is string && key.matches('^[a-z0-9_-]{0,100}$'); }
+    function productPath(id) { return /databases/$(database)/documents/Produtos/$(id); }
+    function movementPath(id) { return /databases/$(database)/documents/Vendas/$(id); }
+    function stockChangeValid(id) {
+      let d = request.resource.data;
+      let m = getAfter(movementPath(d.ultima_movimentacao)).data;
+      let index = d.indice_ultima_movimentacao;
+      let item = m.Itens[index];
+      return d.diff(resource.data).affectedKeys().hasOnly(['estoque_atual', 'ultima_movimentacao', 'indice_ultima_movimentacao'])
+        && !exists(movementPath(d.ultima_movimentacao))
+        && index is int && index >= 0 && index < m.Itens.size()
+        && item.produtoId == id && itemFieldsValid(item)
+        // The first mandatory product write checks payment metadata. Dividing validation
+        // across the atomic writes keeps eight-item receipts within the expression budget.
+        && (index != 0 || (m.get('schema_version', 1) == 1 ? movementTotalsValid(m) : m.schema_version != 2 || extendedMovementValid(m)))
+        && resource.data.get('ativo', true) == true
+        && item.get('unidades_embalagem', 1) in [1, resource.data.get('unidades_caixa', 1)]
+        && d.estoque_atual is int && d.estoque_atual >= -2147483648 && d.estoque_atual <= 2147483647
+        && d.estoque_atual == resource.data.estoque_atual + (m.tipo == 'SAIDA' ? -item.quantidade : item.quantidade) * item.get('unidades_embalagem', 1);
+    }
+    function productMetadataValid(id) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return (changed.hasOnly(['ativo']) ? permission('deleteProducts') : permission('editPrices'))
+        && (request.resource.data.get('ativo', true) == true || permission('deleteProducts')) && resource.data.get('ativo', true) == true
+        && changed.hasOnly(['nome', 'codigo_barras', 'preco_custo_atual', 'preco_venda_atual', 'cost_cents', 'sale_cents', 'imagem', 'ativo', 'estoque_minimo', 'unidades_caixa', 'preco_caixa_cents', 'categoria', 'unidade_venda', 'custo_por_caixa', 'custo_caixa_cents'])
+        && productValid(request.resource.data, id);
+    }
+    match /Produtos/{id} {
+      allow read: if operator();
+      allow create: if permission('editPrices') && productValid(request.resource.data, id)
+        && request.resource.data.estoque_atual == 0
+        && !request.resource.data.keys().hasAny(['ultima_movimentacao', 'indice_ultima_movimentacao', 'ultimo_estorno', 'indice_ultimo_estorno']);
+      allow update: if operator() && (request.resource.data.diff(resource.data).affectedKeys().hasAny(['ultimo_estorno', 'indice_ultimo_estorno']) ? stockReversalValid(id)
+        : request.resource.data.diff(resource.data).affectedKeys().hasAny(['estoque_atual', 'ultima_movimentacao', 'indice_ultima_movimentacao']) ? stockChangeValid(id) : productMetadataValid(id));
+      allow delete: if false;
+    }
+
+    function itemFieldsValid(item) {
+      return item.keys().hasOnly(['produtoId', 'nome_snapshot', 'quantidade', 'precoUnitarioVendido', 'custoUnitarioHistorico', 'sale_unit_cents', 'historical_cost_cents', 'unidades_embalagem', 'imagem_snapshot'])
+        && item.nome_snapshot is string && item.nome_snapshot.size() > 0 && item.nome_snapshot.size() <= 120
+        && item.quantidade is int && item.quantidade > 0 && item.quantidade <= 9999
+        && money(item.sale_unit_cents) && money(item.historical_cost_cents)
+        && decimalMatches(item.precoUnitarioVendido, item.sale_unit_cents)
+        && decimalMatches(item.custoUnitarioHistorico, item.historical_cost_cents)
+        && item.get('unidades_embalagem', 1) is int && item.get('unidades_embalagem', 1) >= 1 && item.get('unidades_embalagem', 1) <= 9999
+        && imageKey(item.get('imagem_snapshot', ''));
+    }
+    function itemValid(m, index) {
+      let item = m.Itens[index];
+      let after = getAfter(productPath(item.produtoId)).data;
+      // Its product update validates the item fields and exact delta. This distributes
+      // evaluation work so an eight-item sale stays under 1000 expressions per operation.
+      return m.produtoIds[index] == item.produtoId
+        && after.ultima_movimentacao == m.id && after.indice_ultima_movimentacao == index;
+    }
+    function optionalItemValid(m, i) { return m.Itens.size() <= i || itemValid(m, i); }
+    function extended(items, i, field) {
+      return items.size() <= i ? 0 : items[i].quantidade * items[i][field];
+    }
+    function sumAmounts(items, field) {
+      let count = items.size();
+      return items[0].quantidade * items[0][field]
+        + (count < 2 ? 0 : items[1].quantidade * items[1][field])
+        + (count < 3 ? 0 : items[2].quantidade * items[2][field])
+        + (count < 4 ? 0 : items[3].quantidade * items[3][field])
+        + (count < 5 ? 0 : items[4].quantidade * items[4][field])
+        + (count < 6 ? 0 : items[5].quantidade * items[5][field])
+        + (count < 7 ? 0 : items[6].quantidade * items[6][field])
+        + (count < 8 ? 0 : items[7].quantidade * items[7][field]);
+    }
+    function movementTotalsValid(m) {
+      let cost = sumAmounts(m.Itens, 'historical_cost_cents');
+      let total = m.tipo == 'SAIDA' ? sumAmounts(m.Itens, 'sale_unit_cents') : cost;
+      return m.total_cents == total && m.profit_cents == (m.tipo == 'SAIDA' ? total - cost : 0)
+        && decimalMatches(m.valorTotal, m.total_cents) && decimalMatches(m.lucroTotal, m.profit_cents);
+    }
+    function movementValid(m, id) {
+      return m.keys().hasOnly(['id', 'dataHora', 'tipo', 'valorTotal', 'lucroTotal', 'total_cents', 'profit_cents', 'produtoIds', 'Itens', 'schema_version', 'operador_id', 'operador_nome', 'cliente_id', 'cliente_nome', 'pagamentos', 'troco_cents', 'receivable_cents', 'caixa_id', 'aparelho_id', 'due_epoch_day', 'credit_override_reason'])
+        && uuid(id) && m.id == id && m.dataHora is timestamp && m.tipo in ['SAIDA', 'ENTRADA']
+        && m.Itens is list && m.Itens.size() >= 1 && m.Itens.size() <= 8
+        && m.produtoIds is list && m.produtoIds.size() == m.Itens.size()
+        && money(m.total_cents) && m.profit_cents is int
+        && itemValid(m, 0) && optionalItemValid(m, 1) && optionalItemValid(m, 2) && optionalItemValid(m, 3)
+        && optionalItemValid(m, 4) && optionalItemValid(m, 5) && optionalItemValid(m, 6) && optionalItemValid(m, 7)
+        && (m.get('schema_version', 1) != 2 || movementTotalsValid(m))
+        && (m.get('schema_version', 1) == 1 ? !m.keys().hasAny(['operador_id', 'operador_nome', 'cliente_id', 'cliente_nome', 'pagamentos', 'troco_cents', 'receivable_cents']) : m.schema_version == 2 || m.schema_version == 3)
+        && (m.get('schema_version', 1) == 3 ? m.tipo == 'SAIDA' && saleSessionLinked(m) : legacy() || m.tipo == 'ENTRADA');
+    }
+    function actorValid(d) {
+      return d.operador_id == request.auth.uid && d.operador_nome is string && d.operador_nome.size() > 0 && d.operador_nome.size() <= 200;
+    }
+    function extendedMovementValid(m) {
+      let p = m.pagamentos;
+      let electronic = p.PIX + p.DEBIT + p.CREDIT;
+      let paid = electronic + p.CASH;
+      return m.schema_version in [2, 3] && actorValid(m)
+        && m.cliente_id is string && (m.cliente_id == '' || uuid(m.cliente_id))
+        && m.cliente_nome is string && m.cliente_nome.size() <= 120
+        && p is map && p.keys().hasOnly(['CASH', 'PIX', 'DEBIT', 'CREDIT', 'FIADO'])
+        && money(p.CASH) && money(p.PIX) && money(p.DEBIT) && money(p.CREDIT) && money(p.FIADO)
+        && money(m.troco_cents) && m.receivable_cents == p.FIADO
+        && (m.tipo == 'ENTRADA' ? paid == 0 && p.FIADO == 0 && m.troco_cents == 0
+          : electronic <= m.total_cents && m.troco_cents <= p.CASH
+            && paid + p.FIADO - m.troco_cents == m.total_cents
+            && (p.FIADO == 0 || (m.troco_cents == 0 && uuid(m.cliente_id) && m.cliente_nome.size() > 0
+              && getAfter(/databases/$(database)/documents/Clientes/$(m.cliente_id)).data.id == m.cliente_id
+              && getAfter(/databases/$(database)/documents/ContasReceber/$(m.id)).data.original_cents == p.FIADO)));
+    }
+    match /Vendas/{id} {
+      allow read: if operator();
+      // Every item checks the post-batch product marker. Product rules verify its exact stock delta.
+      // Immutable receipts + UUIDs prevent a duplicate batch from decrementing stock twice.
+      // Historical costs are snapshots from the authorized device, including offline cached prices.
+      allow create: if operator() && movementValid(request.resource.data, id);
+      allow update, delete: if false;
+    }
+    function customerPath(id) { return /databases/$(database)/documents/Clientes/$(id); }
+    function customerValid(d, id) {
+      return uuid(id) && d.id == id && d.keys().hasOnly(['id', 'nome', 'telefone', 'credit_limit_cents', 'balance_cents', 'last_credit_event_id', 'last_credit_event_type'])
+        && d.nome is string && d.nome.size() > 0 && d.nome.size() <= 120 && d.telefone is string && d.telefone.size() <= 30
+        && money(d.get('credit_limit_cents', 0)) && d.get('balance_cents', 0) is int && d.get('balance_cents', 0) >= 0;
+    }
+    function customerBalanceChange(id) {
+      let d = request.resource.data;
+      let event = d.last_credit_event_id;
+      let kind = d.last_credit_event_type;
+      let sale = kind == 'VENDA' ? getAfter(movementPath(event)).data : null;
+      let receipt = kind == 'RECEBIMENTO' ? getAfter(receiptPath(event)).data : null;
+      let reversal = kind == 'ESTORNO' ? getAfter(reversalPath(event)).data : null;
+      let delta = kind == 'VENDA' ? sale.receivable_cents : kind == 'RECEBIMENTO' ? -receipt.amount_cents : -reversal.cancelled_receivable_cents;
+      return d.diff(resource.data).affectedKeys().hasOnly(['balance_cents', 'last_credit_event_id', 'last_credit_event_type'])
+        && d.balance_cents is int && d.balance_cents >= 0 && d.balance_cents == resource.data.get('balance_cents', 0) + delta
+        && (kind == 'VENDA' ? !exists(movementPath(event)) && sale.cliente_id == id && sale.schema_version == 3
+            && (resource.data.get('credit_limit_cents', 0) == 0 || d.balance_cents <= resource.data.credit_limit_cents
+                || admin() && sale.credit_override_reason is string && sale.credit_override_reason.size() >= 3)
+          : kind == 'RECEBIMENTO' ? !exists(receiptPath(event)) && receipt.cliente_id == id
+          : kind == 'ESTORNO' && permission('reverseSales') && !exists(reversalPath(event)) && get(movementPath(event)).data.cliente_id == id);
+    }
+    match /Clientes/{id} {
+      allow read: if operator();
+      allow create: if operator() && customerValid(request.resource.data, id) && request.resource.data.get('balance_cents', 0) == 0
+        && request.resource.data.get('last_credit_event_id', '') == '' && request.resource.data.get('last_credit_event_type', '') == ''
+        && (request.resource.data.get('credit_limit_cents', 0) == 0 || admin());
+      allow update: if operator() && ((customerValid(request.resource.data, id)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'telefone', 'credit_limit_cents'])
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['credit_limit_cents']) || admin())) || customerBalanceChange(id));
+      allow delete: if false;
+    }
+    match /Despesas/{id} {
+      allow read: if operator();
+      allow create: if operator() && uuid(id) && request.resource.data.id == id && actorValid(request.resource.data)
+        && request.resource.data.keys().hasOnly(['id', 'dataHora', 'descricao', 'categoria', 'amount_cents', 'operador_id', 'operador_nome'])
+        && request.resource.data.dataHora is timestamp && money(request.resource.data.amount_cents) && request.resource.data.amount_cents > 0
+        && request.resource.data.descricao is string && request.resource.data.descricao.size() > 0 && request.resource.data.descricao.size() <= 200
+        && request.resource.data.categoria is string && request.resource.data.categoria.size() > 0 && request.resource.data.categoria.size() <= 40;
+      allow update, delete: if false;
+    }
+    function debtPath(id) { return /databases/$(database)/documents/ContasReceber/$(id); }
+    function receiptPath(id) { return /databases/$(database)/documents/Recebimentos/$(id); }
+    function methodMap(p) { return p is map && p.keys().hasOnly(['CASH', 'PIX', 'DEBIT', 'CREDIT']) && money(p.CASH) && money(p.PIX) && money(p.DEBIT) && money(p.CREDIT); }
+    function methodTotal(p) { return p.CASH + p.PIX + p.DEBIT + p.CREDIT; }
+    function emptyMethods(p) { return methodMap(p) && methodTotal(p) == 0; }
+    function debtCreateValid(d, id) {
+      let sale = getAfter(movementPath(id)).data;
+      return d.keys().hasOnly(['venda_id', 'cliente_id', 'original_cents', 'settled_cents', 'ultimo_recebimento', 'settled_by_method_cents', 'closed', 'due_epoch_day'])
+        && d.venda_id == id && !exists(movementPath(id)) && sale.receivable_cents == d.original_cents && sale.cliente_id == d.cliente_id
+        && d.original_cents > 0 && d.settled_cents == 0 && d.ultimo_recebimento == ''
+        && (sale.schema_version == 2 ? legacy() : emptyMethods(d.settled_by_method_cents) && d.closed == false && d.due_epoch_day == sale.due_epoch_day
+          && getAfter(customerPath(d.cliente_id)).data.last_credit_event_id == id && getAfter(customerPath(d.cliente_id)).data.last_credit_event_type == 'VENDA');
+    }
+    function debtReceiptValid(d, id) {
+      let receipt = getAfter(receiptPath(d.ultimo_recebimento)).data;
+      let oldMethods = resource.data.get('settled_by_method_cents', {'CASH': 0, 'PIX': 0, 'DEBIT': 0, 'CREDIT': 0});
+      return d.diff(resource.data).affectedKeys().hasOnly(['settled_cents', 'ultimo_recebimento', 'settled_by_method_cents', 'closed'])
+        && !resource.data.get('closed', false) && !exists(reversalPath(id)) && !exists(receiptPath(d.ultimo_recebimento)) && receipt.venda_id == id
+        && d.settled_cents == resource.data.settled_cents + receipt.amount_cents && d.settled_cents <= resource.data.original_cents
+        && (receipt.get('caixa_id', '') == '' ? legacy() && !resource.data.keys().hasAny(['closed'])
+          : d.closed == (d.settled_cents == d.original_cents) && methodMap(d.settled_by_method_cents)
+            && methodTotal(oldMethods) == resource.data.settled_cents && d.settled_by_method_cents.diff(oldMethods).affectedKeys().hasOnly([receipt.metodo])
+            && d.settled_by_method_cents[receipt.metodo] == oldMethods[receipt.metodo] + receipt.amount_cents
+            && getAfter(customerPath(d.cliente_id)).data.last_credit_event_id == receipt.id && getAfter(customerPath(d.cliente_id)).data.last_credit_event_type == 'RECEBIMENTO');
+    }
+    function debtReversalValid(d, id) {
+      let reversal = getAfter(reversalPath(id)).data;
+      return permission('reverseSales') && !exists(reversalPath(id)) && resource.data.get('estorno_id', '') == ''
+        && d.diff(resource.data).affectedKeys().hasOnly(['cancelled_cents', 'estorno_id', 'closed'])
+        && d.estorno_id == id && d.closed == true && d.cancelled_cents == resource.data.original_cents - resource.data.settled_cents
+        && reversal.expected_settled_cents == resource.data.settled_cents && reversal.cancelled_receivable_cents == d.cancelled_cents;
+    }
+    match /ContasReceber/{id} {
+      allow read: if operator();
+      allow create: if operator() && debtCreateValid(request.resource.data, id);
+      allow update: if operator() && (debtReceiptValid(request.resource.data, id) || debtReversalValid(request.resource.data, id));
+      allow delete: if false;
+    }
+    function receiptValid(d, id) {
+      let debt = get(debtPath(d.venda_id)).data;
+      return uuid(id) && d.id == id && actorValid(d)
+        && d.keys().hasOnly(['id', 'venda_id', 'cliente_id', 'dataHora', 'amount_cents', 'metodo', 'operador_id', 'operador_nome', 'caixa_id', 'aparelho_id', 'cost_recognized_cents', 'paid_before_cents'])
+        && d.dataHora is timestamp && money(d.amount_cents) && d.amount_cents > 0 && d.metodo in ['CASH', 'PIX', 'DEBIT', 'CREDIT']
+        && debt.cliente_id == d.cliente_id && !debt.get('closed', false) && getAfter(debtPath(d.venda_id)).data.ultimo_recebimento == id
+        && (d.get('caixa_id', '') == '' ? legacy() && !debt.keys().hasAny(['closed']) : receiptSessionLinked(d) && receiptCostValid(d, debt));
+    }
+    // Split the numerator before multiplying so large historical CMV never overflows
+    // a 64-bit integer. Remainders decide HALF_UP exactly, without floating tie errors.
+    function allocatedCost(cost, paid, total) {
+      let remainder = cost % total;
+      let whole = int(math.round((cost - remainder) / (total * 1.0)));
+      let numerator = remainder * paid;
+      let tail = numerator % total;
+      return whole * paid + int(math.round((numerator - tail) / (total * 1.0))) + (tail * 2 >= total ? 1 : 0);
+    }
+    function receiptCostValid(d, debt) {
+      let sale = get(movementPath(d.venda_id)).data;
+      let before = sale.total_cents - sale.receivable_cents + debt.settled_cents;
+      let cost = sale.total_cents - sale.profit_cents;
+      return d.paid_before_cents == before && d.cost_recognized_cents is int && d.cost_recognized_cents >= 0
+        && d.cost_recognized_cents == allocatedCost(cost, before + d.amount_cents, sale.total_cents) - allocatedCost(cost, before, sale.total_cents);
+    }
+    match /Recebimentos/{id} {
+      allow read: if operator();
+      allow create: if operator() && receiptValid(request.resource.data, id);
+      allow update, delete: if false;
+    }
+    function permissionsValid(p) {
+      return p is map && p.keys().hasOnly(['editPrices', 'deleteProducts', 'viewReports', 'reverseSales', 'exportData'])
+        && p.editPrices is bool && p.deleteProducts is bool && p.viewReports is bool && p.reverseSales is bool && p.exportData is bool;
+    }
+    function profileValid(d, uid) {
+      return d.keys().hasOnly(['uid', 'name', 'email', 'role', 'active', 'permissions', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'])
+        && d.uid == uid && uid.size() > 0 && uid.size() <= 128 && d.name is string && d.name.size() > 0 && d.name.size() <= 120
+        && d.email is string && d.email.size() > 3 && d.email.size() <= 254 && d.role in ['admin', 'operator'] && d.active is bool && permissionsValid(d.permissions)
+        && d.createdAt is timestamp && d.updatedAt == request.time && d.updatedBy == request.auth.uid;
+    }
+    match /Perfis/{uid} {
+      allow get: if request.auth != null && (request.auth.uid == uid || admin());
+      allow list: if admin();
+      allow create: if admin() && profileValid(request.resource.data, uid) && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time;
+      allow update: if admin() && profileValid(request.resource.data, uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'role', 'active', 'permissions', 'updatedAt', 'updatedBy'])
+        && (request.auth.uid != uid || request.resource.data.active == true && request.resource.data.role == 'admin');
+      allow delete: if false;
+    }
+    function sessionPath(id) { return /databases/$(database)/documents/CaixaSessoes/$(id); }
+    function devicePath(id) { return /databases/$(database)/documents/CaixasDispositivos/$(id); }
+    function eventPath(id) { return /databases/$(database)/documents/MovimentosCaixa/$(id); }
+    function reversalPath(id) { return /databases/$(database)/documents/Estornos/$(id); }
+    function saleSessionLinked(m) {
+      let session = getAfter(sessionPath(m.caixa_id)).data;
+      return uuid(m.caixa_id) && uuid(m.aparelho_id) && session.last_event_id == m.id && session.last_event_type == 'VENDA'
+        && session.aparelho_id == m.aparelho_id && session.operador_id == request.auth.uid;
+    }
+    function receiptSessionLinked(d) {
+      let session = getAfter(sessionPath(d.caixa_id)).data;
+      return uuid(d.caixa_id) && uuid(d.aparelho_id) && session.last_event_id == d.id && session.last_event_type == 'RECEBIMENTO'
+        && session.aparelho_id == d.aparelho_id && session.operador_id == request.auth.uid;
+    }
+    function cashSessionCreate(d, id) {
+      let event = getAfter(eventPath(id)).data;
+      return d.keys().hasOnly(['id', 'aparelho_id', 'operador_id', 'operador_nome', 'dataHora', 'status', 'opening_cents', 'expected_cents', 'cash_sales_cents', 'cash_receipts_cents', 'supply_cents', 'withdrawal_cents', 'refund_cents', 'revision', 'last_event_id', 'last_event_type'])
+        && uuid(id) && d.id == id && uuid(d.aparelho_id) && actorValid(d) && d.dataHora is timestamp && d.status == 'OPEN'
+        && money(d.opening_cents) && d.expected_cents == d.opening_cents && d.cash_sales_cents == 0 && d.cash_receipts_cents == 0 && d.supply_cents == 0
+        && d.withdrawal_cents == 0 && d.refund_cents == 0 && d.revision == 0 && d.last_event_id == id && d.last_event_type == 'ABERTURA'
+        && !exists(eventPath(id)) && event.tipo == 'ABERTURA' && event.caixa_id == id && event.amount_cents == d.opening_cents
+        && getAfter(devicePath(d.aparelho_id)).data.active_session_id == id;
+    }
+    function cashBaseUpdate(d) {
+      return resource.data.status == 'OPEN' && resource.data.operador_id == request.auth.uid
+        && d.revision == resource.data.revision + 1 && d.expected_cents is int && d.expected_cents >= 0;
+    }
+    function cashSaleUpdate(d, id) {
+      let sale = getAfter(movementPath(d.last_event_id)).data;
+      let cash = sale.pagamentos.CASH - sale.troco_cents;
+      return d.last_event_type == 'VENDA' && !exists(movementPath(d.last_event_id)) && sale.caixa_id == id && sale.aparelho_id == resource.data.aparelho_id
+        && sale.schema_version == 3 && extendedMovementValid(sale) && movementTotalsValid(sale)
+        && sale.due_epoch_day is int && sale.due_epoch_day >= 0 && sale.due_epoch_day <= 3000000
+        && sale.credit_override_reason is string && sale.credit_override_reason.size() <= 200
+        && (sale.credit_override_reason == '' || admin())
+        && d.diff(resource.data).affectedKeys().hasOnly(['expected_cents', 'cash_sales_cents', 'revision', 'last_event_id', 'last_event_type'])
+        && d.expected_cents == resource.data.expected_cents + cash && d.cash_sales_cents == resource.data.cash_sales_cents + cash;
+    }
+    function cashReceiptUpdate(d, id) {
+      let receipt = getAfter(receiptPath(d.last_event_id)).data;
+      let cash = receipt.metodo == 'CASH' ? receipt.amount_cents : 0;
+      return d.last_event_type == 'RECEBIMENTO' && !exists(receiptPath(d.last_event_id)) && receipt.caixa_id == id && receipt.aparelho_id == resource.data.aparelho_id
+        && actorValid(receipt) && d.diff(resource.data).affectedKeys().hasOnly(['expected_cents', 'cash_receipts_cents', 'revision', 'last_event_id', 'last_event_type'])
+        && d.expected_cents == resource.data.expected_cents + cash && d.cash_receipts_cents == resource.data.cash_receipts_cents + cash;
+    }
+    function cashReversalUpdate(d, id) {
+      let reversal = getAfter(reversalPath(d.last_event_id)).data;
+      let cash = reversal.refund_by_method_cents.CASH;
+      return d.last_event_type == 'ESTORNO' && permission('reverseSales') && !exists(reversalPath(d.last_event_id))
+        && reversal.caixa_id == id && reversal.aparelho_id == resource.data.aparelho_id && actorValid(reversal)
+        && extendedReversalValid(reversal, get(movementPath(d.last_event_id)).data)
+        && d.diff(resource.data).affectedKeys().hasOnly(['expected_cents', 'refund_cents', 'revision', 'last_event_id', 'last_event_type'])
+        && d.expected_cents == resource.data.expected_cents - cash && d.refund_cents == resource.data.refund_cents + cash;
+    }
+    function cashManualUpdate(d, id) {
+      let event = getAfter(eventPath(d.last_event_id)).data;
+      let amount = event.amount_cents;
+      return d.last_event_type in ['SANGRIA', 'SUPRIMENTO', 'FECHAMENTO'] && !exists(eventPath(d.last_event_id))
+        && event.caixa_id == id && event.tipo == d.last_event_type && actorValid(event)
+        && (event.tipo == 'FECHAMENTO' ? d.diff(resource.data).affectedKeys().hasOnly(['status', 'closed_at', 'counted_cents', 'difference_cents', 'revision', 'last_event_id', 'last_event_type'])
+            && d.status == 'CLOSED' && d.closed_at == event.dataHora && d.counted_cents == amount && d.difference_cents == amount - resource.data.expected_cents
+            && event.expected_cents == resource.data.expected_cents && event.expected_revision == resource.data.revision
+            && getAfter(devicePath(resource.data.aparelho_id)).data.active_session_id == ''
+          : event.tipo == 'SANGRIA' ? d.diff(resource.data).affectedKeys().hasOnly(['expected_cents', 'withdrawal_cents', 'revision', 'last_event_id', 'last_event_type'])
+            && d.expected_cents == resource.data.expected_cents - amount && d.withdrawal_cents == resource.data.withdrawal_cents + amount
+          : d.diff(resource.data).affectedKeys().hasOnly(['expected_cents', 'supply_cents', 'revision', 'last_event_id', 'last_event_type'])
+            && d.expected_cents == resource.data.expected_cents + amount && d.supply_cents == resource.data.supply_cents + amount);
+    }
+    match /CaixaSessoes/{id} {
+      allow read: if operator();
+      allow create: if operator() && cashSessionCreate(request.resource.data, id);
+      allow update: if operator() && cashBaseUpdate(request.resource.data) && (request.resource.data.last_event_type == 'VENDA' ? cashSaleUpdate(request.resource.data, id) : request.resource.data.last_event_type == 'RECEBIMENTO' ? cashReceiptUpdate(request.resource.data, id) : request.resource.data.last_event_type == 'ESTORNO' ? cashReversalUpdate(request.resource.data, id) : cashManualUpdate(request.resource.data, id));
+      allow delete: if false;
+    }
+    function deviceValid(d, id) { return uuid(id) && d.id == id && d.keys().hasOnly(['id', 'active_session_id', 'operador_id']); }
+    function deviceOpen(d) {
+      let session = getAfter(sessionPath(d.active_session_id)).data;
+      return uuid(d.active_session_id) && !exists(sessionPath(d.active_session_id)) && session.status == 'OPEN'
+        && session.aparelho_id == d.id && session.operador_id == request.auth.uid && d.operador_id == request.auth.uid;
+    }
+    match /CaixasDispositivos/{id} {
+      allow read: if operator();
+      allow create: if operator() && deviceValid(request.resource.data, id) && deviceOpen(request.resource.data);
+      allow update: if operator() && deviceValid(request.resource.data, id)
+        && (resource.data.active_session_id == '' ? deviceOpen(request.resource.data)
+          : resource.data.operador_id == request.auth.uid && request.resource.data.active_session_id == '' && request.resource.data.operador_id == ''
+            && getAfter(sessionPath(resource.data.active_session_id)).data.status == 'CLOSED');
+      allow delete: if false;
+    }
+    function eventValid(d, id) {
+      let session = getAfter(sessionPath(d.caixa_id)).data;
+      return uuid(id) && d.id == id && actorValid(d) && d.dataHora is timestamp && money(d.amount_cents)
+        && d.keys().hasOnly(['id', 'caixa_id', 'aparelho_id', 'tipo', 'dataHora', 'amount_cents', 'motivo', 'operador_id', 'operador_nome', 'expected_cents', 'expected_revision', 'venda_id'])
+        && session.aparelho_id == d.aparelho_id && session.operador_id == request.auth.uid && d.motivo is string && d.motivo.size() <= 200
+        && (d.tipo == 'ESTORNO' ? !exists(reversalPath(d.venda_id)) && getAfter(reversalPath(d.venda_id)).data.id == id && getAfter(reversalPath(d.venda_id)).data.refund_by_method_cents.CASH == d.amount_cents
+          : d.tipo in ['ABERTURA', 'FECHAMENTO', 'SANGRIA', 'SUPRIMENTO'] && session.last_event_id == id && session.last_event_type == d.tipo
+            && (d.tipo in ['SANGRIA', 'SUPRIMENTO'] ? d.amount_cents > 0 && d.motivo.size() >= 3 : true));
+    }
+    match /MovimentosCaixa/{id} {
+      allow read: if operator();
+      allow create: if operator() && eventValid(request.resource.data, id);
+      allow update, delete: if false;
+    }
+    function reversalItemValid(sale, id, i) {
+      let product = getAfter(productPath(sale.Itens[i].produtoId)).data;
+      return product.ultimo_estorno == id && product.indice_ultimo_estorno == i;
+    }
+    function optionalReversalItem(sale, id, i) { return sale.Itens.size() <= i || reversalItemValid(sale, id, i); }
+    function reversalValid(d, id) {
+      let sale = get(movementPath(id)).data;
+      return d.keys().hasOnly(['id', 'venda_id', 'caixa_id', 'aparelho_id', 'dataHora', 'operador_id', 'operador_nome', 'motivo', 'refund_by_method_cents', 'expected_settled_cents', 'cancelled_receivable_cents', 'original_total_cents', 'original_profit_cents'])
+        && uuid(d.id) && d.venda_id == id && sale.tipo == 'SAIDA' && sale.get('schema_version', 1) >= 2 && actorValid(d) && d.dataHora is timestamp
+        && d.motivo is string && d.motivo.size() >= 3 && d.motivo.size() <= 200 && methodMap(d.refund_by_method_cents)
+        && d.original_total_cents == sale.total_cents && d.original_profit_cents == sale.profit_cents
+        && reversalItemValid(sale, id, 0) && optionalReversalItem(sale, id, 1) && optionalReversalItem(sale, id, 2) && optionalReversalItem(sale, id, 3)
+        && optionalReversalItem(sale, id, 4) && optionalReversalItem(sale, id, 5) && optionalReversalItem(sale, id, 6) && optionalReversalItem(sale, id, 7);
+    }
+    function extendedReversalValid(d, sale) {
+      let debt = sale.receivable_cents > 0 ? get(debtPath(sale.id)).data : null;
+      let settled = sale.receivable_cents > 0 ? debt.settled_by_method_cents : {'CASH': 0, 'PIX': 0, 'DEBIT': 0, 'CREDIT': 0};
+      let p = sale.pagamentos;
+      let refunds = d.refund_by_method_cents;
+      let session = getAfter(sessionPath(d.caixa_id)).data;
+      return session.last_event_id == sale.id && session.last_event_type == 'ESTORNO'
+        && getAfter(eventPath(d.id)).data.venda_id == sale.id
+        && d.expected_settled_cents == methodTotal(settled) && d.cancelled_receivable_cents == sale.receivable_cents - d.expected_settled_cents
+        && refunds.CASH == p.CASH - sale.troco_cents + settled.CASH && refunds.PIX == p.PIX + settled.PIX
+        && refunds.DEBIT == p.DEBIT + settled.DEBIT && refunds.CREDIT == p.CREDIT + settled.CREDIT
+        && (sale.receivable_cents == 0 || debt.settled_cents == d.expected_settled_cents
+          && getAfter(debtPath(sale.id)).data.estorno_id == sale.id && getAfter(customerPath(sale.cliente_id)).data.last_credit_event_id == sale.id
+          && getAfter(customerPath(sale.cliente_id)).data.last_credit_event_type == 'ESTORNO');
+    }
+    function stockReversalValid(id) {
+      let d = request.resource.data;
+      let reversal = getAfter(reversalPath(d.ultimo_estorno)).data;
+      let sale = get(movementPath(d.ultimo_estorno)).data;
+      let i = d.indice_ultimo_estorno;
+      let item = sale.Itens[i];
+      return permission('reverseSales') && d.diff(resource.data).affectedKeys().hasOnly(['estoque_atual', 'ultimo_estorno', 'indice_ultimo_estorno'])
+        && !exists(reversalPath(d.ultimo_estorno)) && i is int && i >= 0 && i < sale.Itens.size() && item.produtoId == id
+        && d.estoque_atual is int && d.estoque_atual >= -2147483648 && d.estoque_atual <= 2147483647
+        && d.estoque_atual == resource.data.estoque_atual + item.quantidade * item.get('unidades_embalagem', 1)
+        && (i != 0 || getAfter(sessionPath(reversal.caixa_id)).data.last_event_id == sale.id && getAfter(sessionPath(reversal.caixa_id)).data.last_event_type == 'ESTORNO');
+    }
+    match /Estornos/{id} {
+      allow read: if operator();
+      allow create: if permission('reverseSales') && reversalValid(request.resource.data, id);
+      allow update, delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

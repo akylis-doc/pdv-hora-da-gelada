@@ -1,0 +1,8 @@
+Hora da Gelada PDV 1.1.1 — Novo nome do aplicativo
+
+O aplicativo passa a se chamar Hora da Gelada PDV no celular, na tela de acesso, no caixa e nas configurações. O título do caixa permite duas linhas para acomodar o nome.
+
+Todas as funções da versão 1.1.0 foram preservadas, incluindo fotos, estoque, pagamentos, fiado, relatórios e atualizações.
+
+Instale como atualização sobre o aplicativo existente. O identificador do aplicativo, a assinatura e a configuração do Firebase foram mantidos.
+Se as regras da versão 1.1.0 já foram publicadas, esta alteração de nome não exige publicá-las novamente. Quem vem de uma versão anterior deve seguir NOVAS-FUNCOES.md antes de usar as funções novas.

@@ -1,0 +1,6 @@
+{
+  "name": "gela-pdv-admin-setup",
+  "private": true,
+  "type": "module",
+  "dependencies": { "firebase-admin": "13.4.0" }
+}

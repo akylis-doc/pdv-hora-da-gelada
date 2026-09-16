@@ -1,0 +1,44 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "CaixaSessoes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "aparelho_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dataHora",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "MovimentosCaixa",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "aparelho_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "dataHora",
+          "order": "DESCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "Vendas",
+      "fieldPath": "Itens",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "Vendas",
+      "fieldPath": "produtoIds",
+      "indexes": []
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+PDV Hora da Gelada 1.3.0 (6)
+
+- Logs e diagnóstico locais em Ajustes, para administrador, disponíveis sem internet.
+- Rastreamento de vendas, carrinho, pagamentos, estoque, caixa, autenticação, sincronização e atualização.
+- Filtros, detalhes, etapas lentas, exportação JSON, limpeza confirmada e retenção automática.
+- Leitor de código de barras exige leituras consistentes ao longo do tempo, preservando suporte a códigos curtos.
+
+Atualize sobre a instalação anterior, sem desinstalar. O módulo de logs não exige novas regras ou índices em relação à 1.2.0. Confira os cenários práticos nos dois aparelhos antes do uso normal na loja.

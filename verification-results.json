@@ -1,0 +1,45 @@
+{
+  "domain": [
+    {
+      "name": "br.com.bebidaspdv.core.CalculateMonthlyReportTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "br.com.bebidaspdv.core.CreateMovementTest",
+      "tests": "11",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "br.com.bebidaspdv.core.MoneyTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    }
+  ],
+  "viewModel": [
+    {
+      "name": "br.com.bebidaspdv.ui.PosViewModelTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    }
+  ],
+  "firestoreRules": {
+    "tests": 15,
+    "failures": 0,
+    "emulator": "1.19.8"
+  },
+  "androidLint": {
+    "errors": 0,
+    "warnings": 7
+  },
+  "notice": "APK debug sem configuração Firebase; validação em dois aparelhos não executada.",
+  "apkSha256": "27458a9d53b92cf064f77908c0c5bdcc4b31fe2c1dfa47075def2fee2a5ee2d1"
+}

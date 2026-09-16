@@ -1,0 +1,11 @@
+Gela PDV 1.1.0 — Estoque, caixa e gestão da loja
+
+Estoque: catálogo de fotos incluídas no aplicativo, alertas de baixo estoque e falta, cadastro de caixas e unidades e exclusão do catálogo com confirmação.
+Caixa: quantidades pelo teclado, imagens, revisão do carrinho, pagamento dividido, cálculo de restante e troco em dinheiro, cliente opcional e fiado para clientes cadastrados.
+Fiado: consulta por cliente e recebimentos parciais com confirmação online, mantendo o saldo compartilhado entre os dois celulares.
+Relatórios: vendas individuais por operador e cliente, produtos mais/menos vendidos e mais rentáveis, despesas e resultado mensal, recebimentos separados do faturamento.
+Configurações: conta conectada, versão do aplicativo, troca de operador após sincronizar e acesso às atualizações.
+
+Antes de distribuir: publique as novas regras e índices do Firestore conforme NOVAS-FUNCOES.md e aguarde a sincronização nos celulares. Preserve a instalação atual.
+As fotos reais devem ser adicionadas à pasta fotos-produtos do projeto e incluídas em um novo APK. Esta entrega ainda não inclui fotos reais de produtos.
+

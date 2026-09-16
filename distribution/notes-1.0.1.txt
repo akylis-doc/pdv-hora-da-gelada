@@ -1,0 +1,8 @@
+Gela PDV 1.0.1 — Atualizações de teste
+
+Nova aba Atualizações com consulta de versões e download pelo Firebase App Distribution.
+Exibição da versão instalada e das novidades de cada versão.
+Verificação do carrinho e da sincronização antes de iniciar a atualização.
+O Android pede confirmação para instalar.
+
+Esta versão prepara o recebimento das próximas melhorias. O cadastro de fotos e as melhorias de estoque, pagamentos e relatórios serão entregues em versões futuras.
