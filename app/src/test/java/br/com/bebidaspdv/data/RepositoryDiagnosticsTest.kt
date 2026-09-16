@@ -145,7 +145,13 @@ class RepositoryDiagnosticsTest {
         try {
             logger.repositoryStep(TraceContext(), LogCategory.DATABASE, "WRITE", "Repository", "write") { throw failure }
             fail("Expected original exception")
-        } catch (actual: IllegalArgumentException) { assertSame(failure, actual) }
+        } catch (actual: IllegalArgumentException) {
+            // Coroutine stack-trace recovery may copy the exception and retain the
+            // original as its cause. Verify provenance without requiring the copy's identity.
+            assertEquals(failure.javaClass, actual.javaClass)
+            assertEquals(failure.message, actual.message)
+            assertTrue(generateSequence<Throwable>(actual) { it.cause }.take(8).any { it === failure })
+        }
         assertEquals(1, logger.failedSteps)
         assertNull(currentLogTrace())
     }

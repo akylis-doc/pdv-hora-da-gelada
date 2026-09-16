@@ -1,6 +1,6 @@
 # Instalar a versão 1.3.0 (6)
 
-O nome previsto para o arquivo de entrega é **PDV-Hora-da-Gelada-1.3.0.apk**, na pasta `outputs`, ao lado da pasta do projeto `BebidasPDV`. Consulte [VALIDACAO-1.3.0.md](VALIDACAO-1.3.0.md) antes de instalar: a geração desta versão ainda depende de concluir a compilação bloqueada por acesso a arquivos no ambiente automatizado. O repositório GitHub armazena o código; o instalador é um artefato separado.
+O arquivo de entrega é **PDV-Hora-da-Gelada-1.3.0.apk**, na pasta `outputs`, ao lado da pasta do projeto `BebidasPDV`. Foi gerado e verificado em 16/09/2026, com versão 1.3.0 (6) e a assinatura original. Consulte os resultados e a identificação do arquivo em [VALIDACAO-1.3.0.md](VALIDACAO-1.3.0.md). O repositório GitHub armazena o código; o instalador é um artefato separado.
 
 1. Nos celulares, confira se as operações anteriores sincronizaram e finalize qualquer carrinho aberto.
 2. Copie o APK para o celular e toque nele. Se solicitado, autorize a instalação pela origem que abriu o arquivo.

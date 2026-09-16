@@ -4,26 +4,45 @@ Conferência em **16/09/2026**. Este documento se refere ao código atual de Log
 
 ## Resultado comprovado
 
-- `:core:test`: **97 testes, zero falhas, zero erros**, conforme os relatórios XML gerados em 16/09/2026. Incluem 25 testes de diagnóstico local e 7 de privacidade, além dos testes existentes de domínio.
-- Os testes locais exercitam níveis, exceções/stack trace, correlação, contextos online/offline, grande volume, filtros, busca, limpeza, retenção, exportação, reabertura do armazenamento, recuperação de registros e detecção de etapas lentas.
-- A compilação Kotlin das variantes debug e release foi concluída nas verificações intermediárias. Isso não equivale a concluir o APK nem os testes do módulo Android.
-- A seleção para o repositório foi revisada: configurações Firebase, `local.properties`, chaves de assinatura, credenciais administrativas, APKs, caches, registros locais e dependências instaladas ficam fora do GitHub. O arquivo de teste que contém uma chave privada fictícia verifica somente o mascaramento; não é uma credencial real.
+A execução completa terminou com **BUILD SUCCESSFUL**. Os relatórios XML contabilizam **213 testes aprovados**, sem falhas, erros ou testes ignorados.
 
-## Etapas ainda pendentes
+| Verificação | Resultado |
+| --- | --- |
+| `:core:test` | 97 testes aprovados; inclui 25 de diagnóstico local e 7 de privacidade. |
+| `:app:testDebugUnitTest` | 116 testes aprovados. |
+| `:app:lintDebug` | Zero erros e 12 avisos: 10 sugestões `UseKtx` e 2 `ApplySharedPref`. |
+| Kotlin debug e release | Compilação concluída. |
+| `:app:assembleDebug` | APK gerado. |
+| `apksigner verify --verbose --print-certs` | Assinatura válida, mesmo certificado das versões anteriores. |
+| `aapt dump badging` | Pacote, nome, versão e SDK conferidos. |
 
-A verificação completa encontrou `java.nio.file.AccessDeniedException` na etapa `:app:compileDebugJavaWithJavac`, ao resolver o caminho real de uma biblioteca local. Um teste Java isolado reproduziu a falha em `Path.toRealPath()` nos diretórios do projeto. A leitura direta do arquivo funciona, mas a consulta dos diretórios pais é negada no ambiente automatizado, inclusive após concessões de leitura.
+Os testes locais exercitam níveis, exceções/stack trace, correlação, contextos online/offline, grande volume, filtros, busca, limpeza, retenção, exportação, reabertura do armazenamento, recuperação de registros e detecção de etapas lentas. Os testes do módulo Android cobrem também callbacks locais/remotos, filtros e rastreamento, ViewModel de diagnóstico, delegação do handler de crash, atualização, carrinho/venda e abertura/fechamento de caixa.
 
-Por isso, **os novos testes do módulo `app` ainda não foram executados até o fim e o APK 1.3.0 ainda não foi gerado**. Não reutilize os relatórios antigos para considerar estas etapas aprovadas. A verificação final de lint também precisa ser concluída.
+Foi corrigida a importação de `assertNotEquals` em `PosViewModelTest`. O teste de propagação de exceções agora verifica tipo, mensagem e presença da exceção original na cadeia de causas, preservando a verificação quando as corrotinas recuperam a pilha e criam uma cópia da exceção. Nenhuma regra de venda foi alterada por essas correções nos testes.
 
-Os testes adicionados ao módulo Android cobrem callbacks locais/remotos, filtros e rastreamento, ViewModel de diagnóstico, delegação do handler de crash, atualização, carrinho/venda e abertura/fechamento de caixa. Ter esses testes no código não significa que já passaram.
+A seleção para o repositório foi revisada: configurações Firebase, `local.properties`, chaves de assinatura, credenciais administrativas, APKs, caches, registros locais e dependências instaladas ficam fora do GitHub. O arquivo de teste que contém uma chave privada fictícia verifica somente o mascaramento; não é uma credencial real.
 
-Para concluir em um terminal com acesso normal ao projeto, execute com JDK 17 e SDK 35:
+## Reproduzir a validação
+
+Use JDK 17 e SDK 35. Na pasta do projeto:
 
 ```powershell
 .\gradlew.bat :core:test :app:testDebugUnitTest :app:lintDebug :app:compileReleaseKotlin :app:assembleDebug --no-daemon --console=plain
 ```
 
-O APK é produzido em `app/build/outputs/apk/debug/app-debug.apk` somente após a compilação. A chave original é obrigatória: `verifyDebugSigningKey` compara o certificado com `distribution/signing-certificate.sha256`. A impressão digital esperada é `18802e9d8a8baf1fd92ec5bc53fbe41b5e429e8239ee687dde1283a78aba6831` (SHA-256 do certificado, não do APK).
+O APK é produzido em `app/build/outputs/apk/debug/app-debug.apk`. A chave original é obrigatória: `verifyDebugSigningKey` compara o certificado com `distribution/signing-certificate.sha256`.
+
+## Arquivo entregue
+
+- Arquivo: `outputs/PDV-Hora-da-Gelada-1.3.0.apk`, ao lado da pasta `BebidasPDV`.
+- Aplicativo: **PDV Hora da Gelada**, pacote `br.com.bebidaspdv`.
+- Versão: **1.3.0**, código **6**; variante debug para a distribuição de testes existente.
+- Android mínimo: API 26; destino: API 35.
+- Tamanho: **48.970.969 bytes**.
+- SHA-256 do APK: `c9fb6984774d68a4dec6f6885b41d401bae28d96ea1b2c0bcbc710d107e2c33c`.
+- SHA-256 do certificado: `18802e9d8a8baf1fd92ec5bc53fbe41b5e429e8239ee687dde1283a78aba6831`.
+
+A versão e a assinatura permitem atualizar a instalação anterior deste projeto sem desinstalar. A geração do APK não o envia automaticamente ao Firebase App Distribution.
 
 ## Conferência Android e Firebase
 
