@@ -35,7 +35,9 @@ data class CheckoutDraft(val customerName: String = "", val customerId: String =
     val dueDate: String = LocalDate.now(ZoneId.of("America/Sao_Paulo")).plusDays(30).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")),
     val creditOverrideReason: String = "")
 
-data class CartRender(val revision: Long, val trace: TraceContext, val startedNanos: Long)
+/** Read-only receipt of a cart edit, never a second editable cart. */
+data class CartRender(val revision: Long, val trace: TraceContext, val startedNanos: Long,
+    val lines: List<CartLine>, val metadata: Map<String, String>)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PosViewModel(private val repository: PosRepository, private val updates: AppUpdates = UnavailableUpdates,
@@ -45,33 +47,106 @@ class PosViewModel(private val repository: PosRepository, private val updates: A
     private val logger: AppLogger = NoOpLogger) : ViewModel() {
     private var saleTrace: TraceContext? = null
     private var cartRevision = 0L
+    private var receivedCartRevision = 0L
+    private var drawnCartRevision = 0L
     private val _cartRender = MutableStateFlow<CartRender?>(null)
     val cartRender = _cartRender.asStateFlow()
     private fun saleTrace(): TraceContext = saleTrace ?: logger.startTrace(LogCategory.SALE, "SALE_STARTED",
         screen = "CashierScreen", component = "PosViewModel", function = "saleTrace").also { saleTrace = it }
 
-    fun setQuantityFromUi(product: Product, quantity: String, unitsPerPackage: Int = 1) {
-        val trace = saleTrace().copy(entityId = product.id).at("CashierScreen", "quantityInput")
-        logger.info(LogCategory.UI, "CART_QUANTITY_INPUT", "Operador alterou a quantidade", trace)
-        setQuantity(product, quantity, unitsPerPackage)
+    private data class CartAction(val trace: TraceContext, val kind: String, val startedNanos: Long,
+        val before: List<CartLine>, val metadata: Map<String, String>)
+
+    private fun cartAction(kind: String, productId: String?, requested: String, uiBefore: Int? = null,
+        uiEvent: String? = null): CartAction {
+        val before = _cart.value
+        val action = CartAction(TraceContext(entityId = productId, screen = "CashierScreen",
+            component = "PosViewModel", function = kind), kind, System.nanoTime(), before,
+            mapOf("parent_trace_id" to saleTrace().traceId, "action" to kind,
+                "product_id" to productId.orEmpty(), "requested_quantity" to requested,
+                "ui_quantity_before" to (uiBefore?.toString() ?: "not_observed"),
+                "viewmodel_quantity_before" to (before.firstOrNull { it.product.id == productId }?.quantity ?: 0).toString(),
+                "revision_before" to cartRevision.toString()))
+        if (uiEvent != null) cartLog(action, uiEvent, category = LogCategory.UI)
+        cartLog(action, if (kind == "SET_QUANTITY") "SET_PRODUCT_QUANTITY_REQUEST" else "${kind}_STARTED")
+        return action
     }
 
-    private fun cartChanged(trace: TraceContext, event: String, startedNanos: Long) {
-        logger.log(LogLevel.INFO, LogCategory.CART, event, "Carrinho atualizado", trace,
-            status = LogStatus.SUCCESS, durationMs = (System.nanoTime() - startedNanos) / 1_000_000,
-            metadata = mapOf("distinct_products" to _cart.value.size.toString(),
-                "quantity" to _cart.value.sumOf { it.quantity }.toString()))
-        logger.info(LogCategory.SALE, "SALE_TOTAL_UPDATED", "Total recalculado a partir do carrinho", trace)
-        _cartRender.value = CartRender(++cartRevision, trace, startedNanos)
+    private fun cartLog(action: CartAction, event: String, category: LogCategory = LogCategory.CART,
+        extra: Map<String, String> = emptyMap()) {
+        val inputEvent = event.endsWith("_BUTTON_CLICK") || event == "QUANTITY_INPUT_CHANGED"
+        logger.log(LogLevel.INFO, category, event, "Etapa da alteração local do carrinho",
+            if (inputEvent) action.trace.at("ProductRow", "onInteraction") else action.trace,
+            status = if (inputEvent || event.endsWith("_STARTED") || event.endsWith("_REQUEST")) LogStatus.STARTED else LogStatus.SUCCESS,
+            durationMs = (System.nanoTime() - action.startedNanos) / 1_000_000,
+            metadata = action.metadata + mapOf("revision" to cartRevision.toString(),
+                "viewmodel_quantity_after" to (_cart.value.firstOrNull { it.product.id == action.trace.entityId }?.quantity ?: 0).toString()) + extra)
     }
 
-    fun cartRendered(revision: Long) {
-        val render = _cartRender.value?.takeIf { it.revision == revision } ?: return
-        logger.log(LogLevel.INFO, LogCategory.UI, "CART_RENDERED", "Composição do carrinho concluída", 
-            render.trace.at("CashierScreen", "composition"), status = LogStatus.SUCCESS,
+    fun addFromUi(product: Product, unitsPerPackage: Int, uiQuantity: Int) = addToCart(product, unitsPerPackage, uiQuantity)
+    fun removeFromUi(product: Product, uiQuantity: Int) = removeFromCart(product.id, uiQuantity)
+    fun setQuantityFromUi(product: Product, quantity: String, unitsPerPackage: Int = 1, uiQuantity: Int? = null) {
+        if (_working.value) return
+        applyQuantity(product, quantity, unitsPerPackage,
+            cartAction("SET_QUANTITY", product.id, quantity, uiQuantity, "QUANTITY_INPUT_CHANGED"))
+    }
+
+    private fun cartChanged(action: CartAction, event: String) {
+        val changed = action.before != _cart.value
+        if (changed) {
+            val revision = ++cartRevision
+            _cartRender.value?.takeIf { it.revision > drawnCartRevision }?.let { previous ->
+                logger.log(LogLevel.INFO, LogCategory.UI, "CART_RENDER_SUPERSEDED",
+                    "Uma revisão posterior substituiu esta antes da confirmação de desenho", previous.trace,
+                    metadata = previous.metadata + ("superseded_by_revision" to revision.toString()))
+            }
+            cartLog(action, "${action.kind}_STATE_CHANGED")
+            cartLog(action, "STATEFLOW_EMITTED", LogCategory.UI,
+                mapOf("stage" to "publisher", "distinct_products" to _cart.value.size.toString()))
+            cartLog(action, event)
+            cartLog(action, "SALE_TOTAL_UPDATED", LogCategory.SALE,
+                mapOf("total_cents" to _cart.value.sumOf { it.quantity.toLong() * it.saleUnitCents }.toString()))
+            _cartRender.value = CartRender(revision, action.trace, action.startedNanos, _cart.value,
+                action.metadata + mapOf("revision" to revision.toString(),
+                    "viewmodel_quantity_after" to (_cart.value.firstOrNull { it.product.id == action.trace.entityId }?.quantity ?: 0).toString()))
+        }
+        cartLog(action, if (action.kind == "SET_QUANTITY") "SET_PRODUCT_QUANTITY_COMPLETED" else "${action.kind}_COMPLETED",
+            extra = mapOf("state_changed" to changed.toString()))
+    }
+
+    // Catalog snapshots may refresh prices/stock independently. Match the edit's actual quantities,
+    // and report the current UI total rather than acknowledging an unrelated diagnostic emission.
+    private fun matchesRender(render: CartRender, lines: List<CartLine>): Boolean =
+        lines.size == render.lines.size && lines.zip(render.lines).all { (a, b) ->
+            a.product.id == b.product.id && a.quantity == b.quantity && a.unitsPerPackage == b.unitsPerPackage
+        }
+
+    private fun renderLog(render: CartRender, lines: List<CartLine>, event: String, extra: Map<String, String> = emptyMap()) {
+        logger.log(LogLevel.INFO, LogCategory.UI, event, "Estado observado pela interface do caixa",
+            render.trace.at("CashierScreen", "cartRender"), status = if (event == "CART_RENDER_STARTED") LogStatus.STARTED else LogStatus.SUCCESS,
             durationMs = (System.nanoTime() - render.startedNanos) / 1_000_000,
-            metadata = mapOf("revision" to revision.toString()))
-        _cartRender.value = null
+            metadata = render.metadata + mapOf("ui_quantity_after" to (lines.firstOrNull { it.product.id == render.trace.entityId }?.quantity ?: 0).toString(),
+                "ui_total_cents" to lines.sumOf { it.quantity.toLong() * it.saleUnitCents }.toString()) + extra)
+    }
+
+    fun cartStateReceived(render: CartRender, lines: List<CartLine>, lifecycle: String) {
+        if (render.revision <= receivedCartRevision || !matchesRender(render, lines)) return
+        receivedCartRevision = render.revision
+        renderLog(render, lines, "CASHIER_SCREEN_STATE_RECEIVED", mapOf("lifecycle" to lifecycle))
+    }
+    fun cartRenderStarted(render: CartRender, lines: List<CartLine>) {
+        if (render.revision > drawnCartRevision && matchesRender(render, lines)) renderLog(render, lines, "CART_RENDER_STARTED")
+    }
+    fun cartRendered(render: CartRender, lines: List<CartLine>) {
+        if (render.revision <= drawnCartRevision || !matchesRender(render, lines)) return
+        drawnCartRevision = render.revision
+        renderLog(render, lines, "CART_RENDERED", mapOf("stage" to "draw_completed"))
+    }
+    fun cashierLifecycleChanged(state: String) {
+        logger.log(LogLevel.INFO, LogCategory.UI, "CASHIER_LIFECYCLE_CHANGED", "Ciclo de vida da tela de caixa",
+            TraceContext(screen = "CashierScreen", component = "CashierScreen", function = "lifecycle"),
+            metadata = mapOf("lifecycle" to state, "viewmodel_revision" to cartRevision.toString(), "ui_revision" to receivedCartRevision.toString(),
+                "cart_trace_id" to _cartRender.value?.trace?.traceId.orEmpty(), "parent_trace_id" to saleTrace?.traceId.orEmpty()))
     }
     private val capabilityState = MutableStateFlow(capabilities)
     val capabilities: OperatorCapabilities get() = capabilityState.value
@@ -314,27 +389,37 @@ class PosViewModel(private val repository: PosRepository, private val updates: A
     }
 
     fun add(product: Product) {
+        addToCart(product, null, null)
+    }
+
+    private fun addToCart(product: Product, selectedFactor: Int?, uiQuantity: Int?) {
+        if (_working.value) return
         val line = _cart.value.firstOrNull { it.product.id == product.id }
-        setQuantity(product, ((line?.quantity ?: 0) + 1).toString(), line?.unitsPerPackage ?: 1)
+        val quantity = ((line?.quantity ?: 0) + 1).toString()
+        applyQuantity(product, quantity, line?.unitsPerPackage ?: selectedFactor ?: 1,
+            cartAction("ADD_TO_CART", product.id, quantity, uiQuantity,
+                if (uiQuantity != null) "ADD_TO_CART_BUTTON_CLICK" else null))
     }
 
     fun setQuantity(product: Product, quantity: String, unitsPerPackage: Int = 1) {
         if (_working.value) return
-        val started = System.nanoTime()
-        val trace = saleTrace().copy(entityId = product.id).at("PosViewModel", "setQuantity")
-        logger.info(LogCategory.CART, "ADD_PRODUCT_REQUEST", "Solicitação de alteração do carrinho recebida", trace)
+        applyQuantity(product, quantity, unitsPerPackage, cartAction("SET_QUANTITY", product.id, quantity))
+    }
+
+    private fun applyQuantity(product: Product, quantity: String, unitsPerPackage: Int, action: CartAction) {
+        val trace = action.trace
         _checkoutError.value = null
         val count = quantity.toIntOrNull()
         fun reject(code: String, message: String) {
             logger.log(LogLevel.WARNING, LogCategory.CART, "CART_CHANGE_REJECTED", "Quantidade não aplicada", trace,
-                status = LogStatus.FAILED, errorCode = code)
+                status = LogStatus.FAILED, errorCode = code, metadata = action.metadata + ("revision" to cartRevision.toString()))
             notify(message)
         }
         if (count == null || count !in 0..BusinessLimits.MAX_QUANTITY) { reject("INVALID_QUANTITY", "Informe uma quantidade inteira de 0 a 9.999."); return }
         if (count == 0) {
             _cart.update { lines -> lines.filterNot { it.product.id == product.id } }
             if (_cart.value.isEmpty()) _checkoutDraft.value = CheckoutDraft()
-            cartChanged(trace, "PRODUCT_REMOVED", started)
+            cartChanged(action, "PRODUCT_REMOVED")
             return
         }
         val lookup = logger.startStep(trace, LogCategory.PRODUCT, "PRODUCT_LOOKUP", "PosViewModel", "inMemoryCatalog")
@@ -350,25 +435,28 @@ class PosViewModel(private val repository: PosRepository, private val updates: A
             val line = CartLine(latest, count, unitsPerPackage)
             if (existing == null) lines + line else lines.map { if (it.product.id == product.id) line else it }
         }
-        cartChanged(trace, if (existing == null) "PRODUCT_ADDED" else "CART_UPDATED", started)
+        cartChanged(action, if (existing == null) "PRODUCT_ADDED" else "CART_UPDATED")
     }
 
-    fun remove(productId: String) {
+    fun remove(productId: String) = removeFromCart(productId, null)
+
+    private fun removeFromCart(productId: String, uiQuantity: Int?) {
         if (_working.value) return
-        val started = System.nanoTime()
-        val trace = saleTrace().copy(entityId = productId).at("PosViewModel", "remove")
+        val quantity = ((_cart.value.firstOrNull { it.product.id == productId }?.quantity ?: 0) - 1).coerceAtLeast(0)
+        val action = cartAction("REMOVE_FROM_CART", productId, quantity.toString(), uiQuantity,
+            if (uiQuantity != null) "REMOVE_FROM_CART_BUTTON_CLICK" else null)
         _checkoutError.value = null
         _cart.update { lines -> lines.mapNotNull {
             if (it.product.id != productId) it else if (it.quantity > 1) it.copy(quantity = it.quantity - 1) else null
         } }
         if (_cart.value.isEmpty()) _checkoutDraft.value = CheckoutDraft()
-        cartChanged(trace, "PRODUCT_REMOVED", started)
+        cartChanged(action, "PRODUCT_REMOVED")
     }
 
     fun clearCart() { if (!_working.value) {
-        val trace = saleTrace().at("PosViewModel", "clearCart")
+        val action = cartAction("CLEAR_CART", null, "0", uiEvent = "CLEAR_CART_BUTTON_CLICK")
         _cart.value = emptyList(); _checkoutDraft.value = CheckoutDraft(); _checkoutError.value = null
-        cartChanged(trace, "CART_CLEARED", System.nanoTime())
+        cartChanged(action, "CART_CLEARED")
         saleTrace = null
     } }
 

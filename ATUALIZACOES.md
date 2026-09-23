@@ -1,6 +1,6 @@
-# Atualizar o Hora da Gelada PDV — comece aqui
+# Atualizar o PDV Hora da Gelada — comece aqui
 
-Este guia é para a loja que já está usando o aplicativo. A versão atual é **1.1.1 (4)**, com atualizações em **Ajustes → Atualizações**. Ela muda apenas a marca de Gela PDV para **Hora da Gelada PDV**, preservando todas as funções da 1.1.0. Você continua usando o mesmo projeto Firebase, banco e contas. As regras do Firestore são as mesmas da 1.1.0: quem já as publicou não precisa republicar apenas pela mudança de nome; quem vem de uma versão anterior ainda precisa publicá-las. Siga [NOVAS-FUNCOES.md](NOVAS-FUNCOES.md) para conferir essa etapa e conhecer a pasta das fotos.
+Este guia é para a loja que já está usando o aplicativo. A versão atual é **1.3.1 (7)**, com atualizações em **Ajustes → Atualizações**. Ela inclui a correção da atualização visual do carrinho e dos botões de quantidade, preservando as funções anteriores. Você continua usando o mesmo projeto Firebase, banco e contas. Quem já usa a 1.3.0 não precisa publicar regras ou índices novamente. Comece por [INSTALAR-1.3.1.md](INSTALAR-1.3.1.md); quem vem de versões anteriores à 1.2.0 ainda deve concluir a preparação descrita em [ATUALIZACAO-1.2.0.md](ATUALIZACAO-1.2.0.md).
 
 O App Distribution é gratuito para distribuir versões de teste. Não é necessário contratar Blaze para este fluxo nem ativar o Storage. [Fonte: Firebase App Distribution](https://firebase.google.com/products/app-distribution).
 
@@ -36,12 +36,12 @@ Essa API permite a consulta de versões pelo aplicativo. [Configuração oficial
 
 ## 4. Envie a versão atual
 
-O arquivo pronto entregue nesta atualização se chama **Hora-da-Gelada-PDV-1.1.1-testes.apk**. Use o link do APK na resposta desta tarefa. Ele também estará na pasta `outputs/Atualizacoes/1.1.1-4` ao lado do projeto.
+O arquivo entregue nesta atualização se chama **PDV-Hora-da-Gelada-1.3.1.apk**. Use o link do APK na resposta desta tarefa. Ele também estará na pasta `outputs`, ao lado do projeto `BebidasPDV`. O script de preparação guarda outra cópia em `BebidasPDV/distribution/build/1.3.1-7`.
 
 1. No App Distribution, abra **Versões / Releases** e envie esse APK.
 2. Informe os e-mails Google que serão usados para receber as versões nos celulares. Você pode criar um grupo chamado `loja-testes` para reutilizar a lista.
-3. Cole o conteúdo do arquivo `novidades.txt`, que acompanha o APK, nas notas da versão.
-4. Confira o aplicativo, a versão **1.1.1 (4)** e os destinatários. Clique em **Distribuir**.
+3. Cole o conteúdo de `distribution/notes-1.3.1.txt` (também copiado como `novidades.txt` na pasta preparada pelo script) nas notas da versão.
+4. Confira o aplicativo, a versão **1.3.1 (7)** e os destinatários. Clique em **Distribuir**.
 
 O Firebase enviará os convites. Enviar somente o arquivo, sem distribuir aos testadores, não libera a versão para eles. As versões ficam disponíveis para download por 150 dias; mantenha também seus APKs arquivados. [Distribuição pelo console](https://firebase.google.com/docs/app-distribution/android/distribute-console).
 
@@ -52,7 +52,7 @@ O Firebase enviará os convites. Enviar somente o arquivo, sem distribuir aos te
 3. Aceite o convite e entre com a conta Google convidada. Siga a página de testes para baixar o APK; ela pode oferecer o aplicativo Firebase App Tester.
 4. Abra o APK. Se o Android pedir, autorize a instalação para o aplicativo que está abrindo o arquivo. Os nomes das telas variam entre aparelhos.
 5. Confirme **Atualizar / Instalar** sobre o aplicativo existente, antes chamado Gela PDV.
-6. Abra o Hora da Gelada PDV e confira os produtos e o acesso à loja. Em **Ajustes → Atualizações**, deve aparecer **1.1.1 (4)**.
+6. Abra o PDV Hora da Gelada e confira os produtos e o acesso à loja. Em **Ajustes → Atualizações**, deve aparecer **1.3.1 (7)**.
 7. Toque em **Buscar atualização** e, quando solicitado, entre com a conta Google de testes.
 
 Essa conta de testes é separada da conta do operador do caixa. O login já salvo da loja continua sendo usado. [Orientações do Firebase para testadores](https://firebase.google.com/docs/app-distribution/get-set-up-as-a-tester).
@@ -61,7 +61,7 @@ Se você já instalou a versão mais recente liberada para sua conta, “Nenhuma
 
 ## 6. Envie as próximas melhorias
 
-Para cada nova entrega, faremos as alterações, testes e um novo APK. Por exemplo, depois da **1.1.1 (4)**, a próxima poderá ser **1.1.2 (5)**. O número entre parênteses é o código interno: sempre deve aumentar.
+Para cada nova entrega, faremos as alterações, testes e um novo APK. Por exemplo, depois da **1.3.1 (7)**, a próxima poderá ser **1.3.2 (8)**. O número entre parênteses é o código interno: sempre deve aumentar.
 
 No computador:
 
@@ -86,12 +86,12 @@ Abra a pasta **BebidasPDV** no Android Studio. Mantenha o `app/google-services.j
 
 Após alterar e revisar o código:
 
-1. Em `app/build.gradle.kts`, aumente `versionCode` e atualize `versionName`. Exemplo: `5` e `"1.1.2"`.
-2. Crie `distribution/notes-1.1.2.txt` descrevendo as mudanças.
+1. Em `app/build.gradle.kts`, aumente `versionCode` e atualize `versionName`. Exemplo para uma versão posterior à atual: `8` e `"1.3.2"`.
+2. Crie `distribution/notes-1.3.2.txt` descrevendo as mudanças.
 3. No terminal PowerShell do Android Studio, aberto na pasta BebidasPDV, execute:
 
 ```powershell
-.\tools\distribution\Prepare-Update.ps1 -PreviousVersionCode 4
+.\tools\distribution\Prepare-Update.ps1 -PreviousVersionCode 7
 ```
 
 Use em `PreviousVersionCode` o maior código que você já distribuiu, não necessariamente o do seu próprio celular. O script compila, executa testes, verifica assinatura e separa o APK com um nome claro. Ele não publica nem envia convites.
@@ -99,8 +99,8 @@ Use em `PreviousVersionCode` o maior código que você já distribuiu, não nece
 No exemplo, os arquivos ficam em:
 
 ```text
-BebidasPDV\distribution\build\1.1.2-5\
-    Hora-da-Gelada-PDV-1.1.2-testes.apk
+BebidasPDV\distribution\build\1.3.2-8\
+    PDV-Hora-da-Gelada-1.3.2.apk
     novidades.txt
     verificacao.json
 ```
@@ -122,7 +122,7 @@ Envie apenas o APK ao App Distribution e copie as notas. Não envie o ZIP do pro
 ## Para quem mantém o código
 
 - O SDK completo do App Distribution está somente em `debugImplementation`. A variante `release` usa `UnavailableUpdates` e não inclui o SDK de atualização. A distribuição atual é privada, para testes.
-- A versão 1.1.0 acrescentou campos e coleções e exige publicar as regras atualizadas ao migrar de versões anteriores. A 1.1.1 muda apenas a marca e usa as mesmas regras; quem já as publicou não precisa republicar. Ela continua lendo registros antigos e preserva a chave e o identificador do app. Atualize os dois aparelhos antes de começar a usar as funções da 1.1.0, conforme NOVAS-FUNCOES.md.
+- A versão 1.3.1 corrige o Caixa e usa as mesmas regras e índices da 1.3.0/1.2.0. Ela preserva a chave e o identificador do app. Para instalações anteriores à 1.2.0, conclua a preparação de dados e permissões em ATUALIZACAO-1.2.0.md. As instruções da 1.1.x permanecem como histórico.
 - A instalação usa a trava das operações do PDV, exige carrinho vazio e verifica a fila completa do Firestore com limite de 15 segundos antes de chamar o SDK. O download usa progresso dentro da tela.
 - Versões futuras precisam continuar lendo registros antigos e tolerar campos novos ausentes. Os dois celulares podem ficar em versões diferentes; uma mudança de banco exige planejamento próprio. Distribuição remota não elimina a necessidade de testar cada alteração.
 - Para validar a atualização real, instale a 1.0.1 em um aparelho de teste, distribua uma versão seguinte, teste aceite/cancelamento no Android e confira a sessão e os dados após atualizar. Testes locais não substituem essa validação com a conta de testador.

@@ -64,26 +64,102 @@ class PosViewModelTest {
     private fun createModel(): PosViewModel = PosViewModel(repository).also(models::add)
 
     @Test
+    fun `each cart action has its own trace and revision without mutating prior lists`() = runTest(dispatcher) {
+        val logger = RecordingLogger()
+        val model = PosViewModel(repository, logger = logger).also(models::add)
+        runCurrent()
+        model.addFromUi(product, 1, 0)
+        val original = model.cart.value
+        model.addFromUi(product, 1, 0) // Same captured UI value, before a new frame.
+        model.setQuantityFromUi(product, "5", 1, 2)
+        model.removeFromUi(product, 1) // Uses current 5, not the stale UI value 1.
+        assertEquals(1, original.single().quantity)
+        assertEquals(4, model.cart.value.single().quantity)
+        assertEquals(4L, model.cartRender.value?.revision)
+        assertEquals(4000L, model.cart.value.sumOf { it.quantity * it.saleUnitCents })
+        assertEquals(20, repository.products.value.value.single().stock)
+        val emissions = logger.records.filter { it.event == "STATEFLOW_EMITTED" }
+        assertEquals(listOf("1", "2", "3", "4"), emissions.map { it.metadata["revision"] })
+        assertEquals(4, emissions.map { it.traceId }.distinct().size)
+        assertEquals(1, emissions.map { it.metadata["parent_trace_id"] }.distinct().size)
+        assertTrue(repository.submissions.isEmpty())
+    }
+
+    @Test
+    fun `unchanged and rejected quantities do not invent state emissions or revisions`() = runTest(dispatcher) {
+        val logger = RecordingLogger()
+        val model = PosViewModel(repository, logger = logger).also(models::add)
+        runCurrent()
+        model.setQuantityFromUi(product, "2", 1, 0)
+        model.setQuantityFromUi(product, "2", 1, 2)
+        model.setQuantityFromUi(product, "21", 1, 2)
+        assertEquals(1L, model.cartRender.value?.revision)
+        assertEquals(1, logger.records.count { it.event == "STATEFLOW_EMITTED" })
+        assertEquals("false", logger.records.last { it.event == "SET_PRODUCT_QUANTITY_COMPLETED" }.metadata["state_changed"])
+        assertEquals("INSUFFICIENT_STOCK", logger.records.last().errorCode)
+    }
+
+    @Test
+    fun `render receipt must match visible quantities and is acknowledged only once`() = runTest(dispatcher) {
+        val logger = RecordingLogger()
+        val model = PosViewModel(repository, logger = logger).also(models::add)
+        runCurrent()
+        model.addFromUi(product, 1, 0)
+        val receipt = requireNotNull(model.cartRender.value)
+        model.cartStateReceived(receipt, emptyList(), "RESUMED")
+        model.cartRendered(receipt, emptyList())
+        assertTrue(logger.records.none { it.event == "CART_RENDERED" || it.event == "CASHIER_SCREEN_STATE_RECEIVED" })
+        model.cartStateReceived(receipt, model.cart.value, "RESUMED")
+        model.cartRenderStarted(receipt, model.cart.value)
+        model.cartRendered(receipt, model.cart.value)
+        model.cartRendered(receipt, model.cart.value)
+        val draw = logger.records.single { it.event == "CART_RENDERED" }
+        assertEquals("1", draw.metadata["ui_quantity_after"])
+        assertEquals("1", draw.metadata["revision"])
+        assertEquals(receipt.trace.traceId, draw.traceId)
+    }
+
+    @Test
+    fun `rapid package additions preserve unit factor and respect shared stock`() = runTest(dispatcher) {
+        val boxed = product.copy(packageSize = 6, packageSaleCents = 5000)
+        repository.products.value = Feed(listOf(boxed))
+        val model = createModel()
+        runCurrent()
+        repeat(4) { model.addFromUi(boxed, 6, 0) }
+        assertEquals(3, model.cart.value.single().quantity)
+        assertEquals(18, model.cart.value.single().stockQuantity)
+        assertEquals(15000L, model.cart.value.sumOf { it.quantity * it.saleUnitCents })
+        model.setQuantityFromUi(boxed, "0", 6, 3)
+        model.addFromUi(boxed, 1, 0)
+        assertEquals(1, model.cart.value.single().stockQuantity)
+        assertEquals(20, repository.products.value.value.single().stock)
+    }
+
+    @Test
     fun `UI cart payment and offline checkout preserve trace through repository and release before remote ack`() = runTest(dispatcher) {
         val logger = RecordingLogger()
         val model = PosViewModel(repository, logger = logger).also(models::add)
         runCurrent()
         model.setQuantityFromUi(product, "2")
         val rendered = requireNotNull(model.cartRender.value)
-        model.cartRendered(rendered.revision)
-        model.cartRendered(rendered.revision)
+        model.cartStateReceived(rendered, model.cart.value, "RESUMED")
+        model.cartRendered(rendered, model.cart.value)
+        model.cartRendered(rendered, model.cart.value)
         model.addPayment(br.com.bebidaspdv.core.PaymentMethod.CASH, "20,00")
         model.checkoutFromUi()
         runCurrent()
         val trace = requireNotNull(repository.submissionTrace)
         assertEquals(repository.submissions.single().id, trace.operationId)
-        assertEquals(rendered.trace.traceId, trace.traceId)
+        assertEquals(rendered.metadata["parent_trace_id"], trace.traceId)
+        assertNotEquals(rendered.trace.traceId, trace.traceId)
         assertTrue(logger.records.none { it.event == "SALE_COMPLETED" })
         repository.acceptLocally()
         runCurrent()
-        val events = logger.records.filter { it.traceId == trace.traceId }.map { it.event }
-        assertTrue(events.containsAll(listOf("SALE_STARTED", "CART_QUANTITY_INPUT", "ADD_PRODUCT_REQUEST",
-            "PRODUCT_LOOKUP_COMPLETED", "PRODUCT_ADDED", "CART_RENDERED", "PAYMENT_REGISTERED", "SALE_FINALIZE_CLICK", "SALE_COMPLETED")))
+        val events = logger.records.filter { it.traceId == rendered.trace.traceId }.map { it.event }
+        assertTrue(events.containsAll(listOf("QUANTITY_INPUT_CHANGED", "SET_PRODUCT_QUANTITY_REQUEST",
+            "PRODUCT_LOOKUP_COMPLETED", "PRODUCT_ADDED", "STATEFLOW_EMITTED", "CASHIER_SCREEN_STATE_RECEIVED", "CART_RENDERED")))
+        assertTrue(logger.records.filter { it.traceId == trace.traceId }.map { it.event }
+            .containsAll(listOf("SALE_STARTED", "PAYMENT_REGISTERED", "SALE_FINALIZE_CLICK", "SALE_COMPLETED")))
         assertEquals(1, events.count { it == "CART_RENDERED" })
         assertEquals(product.name, logger.records.single { it.event == "PRODUCT_LOOKUP_COMPLETED" }.metadata["product_name"])
         // Only repository callbacks describe sync; UI completion cannot overwrite a fast server ack.

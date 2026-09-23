@@ -49,7 +49,7 @@ if (!(Test-Path -LiteralPath $notes)) { throw "Escreva as novidades em $notes an
 
 $versionDirectory = Join-Path $OutputDirectory "$($element.versionName)-$($element.versionCode)"
 New-Item -ItemType Directory -Force -Path $versionDirectory | Out-Null
-$targetApk = Join-Path $versionDirectory "Hora-da-Gelada-PDV-$($element.versionName)-testes.apk"
+$targetApk = Join-Path $versionDirectory "PDV-Hora-da-Gelada-$($element.versionName).apk"
 $apkHash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()
 if ((Test-Path -LiteralPath $targetApk) -and (Get-FileHash -LiteralPath $targetApk -Algorithm SHA256).Hash.ToLowerInvariant() -ne $apkHash) {
     throw 'Já existe um APK diferente para esta versão na pasta de saída. Aumente a versão para preservar o histórico.'

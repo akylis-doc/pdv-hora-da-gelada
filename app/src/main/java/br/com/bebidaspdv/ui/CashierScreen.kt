@@ -12,11 +12,14 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.LifecycleEventObserver
 import br.com.bebidaspdv.core.*
 import java.time.LocalDate
 import java.time.ZoneId
@@ -34,12 +37,20 @@ internal fun paymentLabel(method: PaymentMethod): String = when (method) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CashierScreen(model: PosViewModel, onGoToStock: () -> Unit, operatorId: String = "", canOverrideCredit: Boolean = false) {
-    val cartRender by model.cartRender.collectAsStateWithLifecycle()
-    LaunchedEffect(cartRender?.revision) { cartRender?.let { model.cartRendered(it.revision) } }
+    val cartRender = model.cartRender.collectAsStateWithLifecycle().value
     val feed by model.products.collectAsStateWithLifecycle()
     val loading by model.productsLoading.collectAsStateWithLifecycle()
     val error by model.productsError.collectAsStateWithLifecycle()
-    val cart by model.cart.collectAsStateWithLifecycle()
+    // The draw receipt and the content must describe the same composition snapshot.
+    val cart = model.cart.collectAsStateWithLifecycle().value
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, model) {
+        model.cashierLifecycleChanged(lifecycle.currentState.name)
+        val observer = LifecycleEventObserver { _, _ -> model.cashierLifecycleChanged(lifecycle.currentState.name) }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    SideEffect { cartRender?.let { model.cartStateReceived(it, cart, lifecycle.currentState.name) } }
     val working by model.working.collectAsStateWithLifecycle()
     var search by rememberSaveable { mutableStateOf("") }
     var showCart by rememberSaveable { mutableStateOf(false) }
@@ -54,7 +65,11 @@ internal fun CashierScreen(model: PosViewModel, onGoToStock: () -> Unit, operato
     }
     val total = cart.sumOf { it.quantity.toLong() * it.saleUnitCents }
     LaunchedEffect(cart.isEmpty(), working) { if (cart.isEmpty() && !working) showCart = false }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize().drawWithContent {
+        cartRender?.let { model.cartRenderStarted(it, cart) }
+        drawContent()
+        cartRender?.let { model.cartRendered(it, cart) }
+    }) {
         val wide = maxWidth >= 840.dp
         Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             Column(Modifier.padding(vertical = 10.dp)) {
@@ -81,12 +96,14 @@ internal fun CashierScreen(model: PosViewModel, onGoToStock: () -> Unit, operato
                             items(filtered, key = Product::id) { product ->
                                 ProductRow(product, cart.firstOrNull { it.product.id == product.id }, !working,
                                     favorite = product.id in favorites, onFavorite = { favorites = favoriteStore.toggle(product.id) },
-                                ) { quantity, factor -> model.setQuantityFromUi(product, quantity, factor) }
+                                    onAdd = { factor, shown -> model.addFromUi(product, factor, shown) },
+                                    onRemove = { shown -> model.removeFromUi(product, shown) },
+                                ) { quantity, factor, shown -> model.setQuantityFromUi(product, quantity, factor, shown) }
                             }
                         }
                     }
                 }
-                if (wide) Surface(Modifier.width(370.dp).fillMaxHeight().padding(bottom = 12.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(24.dp)) { CartPanel(model, canOverrideCredit) }
+                if (wide) Surface(Modifier.width(370.dp).fillMaxHeight().padding(bottom = 12.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(24.dp)) { CartPanel(model, canOverrideCredit, cart) }
             }
             if (!wide) Surface(shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -99,14 +116,15 @@ internal fun CashierScreen(model: PosViewModel, onGoToStock: () -> Unit, operato
             }
         }
         if (!wide && showCart) ModalBottomSheet(onDismissRequest = { if (!working) showCart = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            Box(Modifier.fillMaxWidth().fillMaxHeight(0.94f).imePadding()) { CartPanel(model, canOverrideCredit) }
+            Box(Modifier.fillMaxWidth().fillMaxHeight(0.94f).imePadding()) { CartPanel(model, canOverrideCredit, cart) }
         }
     }
     if (scanning) BarcodeScannerDialog(onDetected = { search = it; favoritesOnly = false; scanning = false }, onDismiss = { scanning = false })
 }
 
 @Composable
-private fun ProductRow(product: Product, line: CartLine?, enabled: Boolean, favorite: Boolean, onFavorite: () -> Unit, onQuantity: (String, Int) -> Unit) {
+private fun ProductRow(product: Product, line: CartLine?, enabled: Boolean, favorite: Boolean, onFavorite: () -> Unit,
+    onAdd: (Int, Int) -> Unit, onRemove: (Int) -> Unit, onQuantity: (String, Int, Int) -> Unit) {
     var mode by rememberSaveable(product.id, product.packageSize) { mutableIntStateOf(1) }
     val factor = line?.unitsPerPackage ?: mode
     val quantity = line?.quantity ?: 0
@@ -128,14 +146,14 @@ private fun ProductRow(product: Product, line: CartLine?, enabled: Boolean, favo
             }
             if (product.packageSize > 1) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(1, product.packageSize).forEach { size -> FilterChip(selected = factor == size, enabled = enabled,
-                    onClick = { mode = size; if (line != null) onQuantity(quantity.toString(), size) }, label = { Text(if (size == 1) productUnitLabel(product.unitLabel).replaceFirstChar(Char::uppercase) else "Caixa • $size ${productUnitShort(product.unitLabel)}") }) }
+                    onClick = { mode = size; if (line != null) onQuantity(quantity.toString(), size, quantity) }, label = { Text(if (size == 1) productUnitLabel(product.unitLabel).replaceFirstChar(Char::uppercase) else "Caixa • $size ${productUnitShort(product.unitLabel)}") }) }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                FilledTonalIconButton(onClick = { onQuantity((quantity - 1).coerceAtLeast(0).toString(), factor) }, enabled = enabled && quantity > 0, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.Remove, "Remover ${product.name}") }
-                OutlinedTextField(if (quantity == 0) "" else quantity.toString(), { raw -> if (raw.isEmpty() || raw.all(Char::isDigit)) onQuantity(raw.ifEmpty { "0" }, factor) },
+                FilledTonalIconButton(onClick = { onRemove(quantity) }, enabled = enabled && quantity > 0, modifier = Modifier.size(52.dp)) { Icon(Icons.Default.Remove, "Remover ${product.name}") }
+                OutlinedTextField(if (quantity == 0) "" else quantity.toString(), { raw -> if (raw.isEmpty() || raw.all(Char::isDigit)) onQuantity(raw.ifEmpty { "0" }, factor, quantity) },
                     label = { Text(if (factor == 1) productUnitLabel(product.unitLabel, true).replaceFirstChar(Char::uppercase) else "Caixas") }, placeholder = { Text("0") }, modifier = Modifier.weight(1f), singleLine = true, enabled = enabled,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                FilledTonalIconButton(onClick = { onQuantity((quantity + 1).toString(), factor) }, enabled = enabled && (quantity + 1L) * factor <= product.stock && quantity < 9999,
+                FilledTonalIconButton(onClick = { onAdd(factor, quantity) }, enabled = enabled && (quantity + 1L) * factor <= product.stock && quantity < 9999,
                     modifier = Modifier.size(52.dp)) { Icon(Icons.Default.Add, "Adicionar ${product.name}") }
             }
         }
@@ -143,8 +161,7 @@ private fun ProductRow(product: Product, line: CartLine?, enabled: Boolean, favo
 }
 
 @Composable
-private fun CartPanel(model: PosViewModel, canOverrideCredit: Boolean) {
-    val cart by model.cart.collectAsStateWithLifecycle()
+private fun CartPanel(model: PosViewModel, canOverrideCredit: Boolean, cart: List<CartLine>) {
     val working by model.working.collectAsStateWithLifecycle()
     val error by model.checkoutError.collectAsStateWithLifecycle()
     val draft by model.checkoutDraft.collectAsStateWithLifecycle()

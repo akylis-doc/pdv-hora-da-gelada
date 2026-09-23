@@ -2,14 +2,15 @@
 
 PDV Android nativo para uma loja de conveniência, com Kotlin, Jetpack Compose Material 3, MVVM, domínio separado, Koin, Navigation Compose, Firebase Authentication e Cloud Firestore com persistência offline.
 
-A versão atual do projeto é **1.3.0 (6)**. Ela acrescenta [Logs e Diagnóstico locais](DIAGNOSTICO.md) e inclui a correção de estabilidade do leitor de código de barras, preservando as funções da 1.2.0. O `applicationId` continua **`br.com.bebidaspdv`** e a chave de assinatura deve ser preservada.
+A versão atual do projeto é **1.3.1 (7)**. Ela corrige a atualização visual do carrinho ao selecionar Caixa novamente e a perda de incrementos em cliques rápidos. Inclui rastreamento separado de adição, digitação, remoção e desenho, preservando [Logs e Diagnóstico locais](DIAGNOSTICO.md), o leitor e as demais funções. O `applicationId` continua **`br.com.bebidaspdv`** e a chave de assinatura deve ser preservada.
 
-O roteiro atual está em [INSTALAR-1.3.0.md](INSTALAR-1.3.0.md), e os resultados de teste em [VALIDACAO-1.3.0.md](VALIDACAO-1.3.0.md). A versão 1.3.0 usa as mesmas regras e índices da 1.2.0. Preparação do Firebase, distribuição e conferência prática nos dois celulares são etapas separadas. Gerar o instalador não executa a migração antiga, não configura o primeiro administrador e não publica regras ou índices.
+O roteiro atual está em [INSTALAR-1.3.1.md](INSTALAR-1.3.1.md), e os resultados de teste em [VALIDACAO-1.3.1.md](VALIDACAO-1.3.1.md). A versão 1.3.1 usa as mesmas regras e índices da 1.3.0/1.2.0. Preparação do Firebase, distribuição e conferência prática nos dois celulares são etapas separadas. Gerar o instalador não executa a migração antiga, não configura o primeiro administrador e não publica regras ou índices.
 
 ## Comece por aqui
 
-- **Atualização atual:** [INSTALAR-1.3.0.md](INSTALAR-1.3.0.md).
+- **Atualização atual:** [INSTALAR-1.3.1.md](INSTALAR-1.3.1.md).
 - **Investigar problemas e exportar logs:** [DIAGNOSTICO.md](DIAGNOSTICO.md).
+- **Correção incluída na 1.3.1:** [atualização visual do carrinho, causa e testes](CORRECAO-CAIXA.md).
 - **Código privado no GitHub:** [akylis-doc/pdv-hora-da-gelada](https://github.com/akylis-doc/pdv-hora-da-gelada). Configuração Firebase, chave de assinatura e dados locais são mantidos fora do repositório.
 - **Histórico — instalação da 1.2.0:** [INSTALAR-1.2.0.md](INSTALAR-1.2.0.md), com a ordem de preparação e instalação nos dois celulares.
 - **Histórico — validação da 1.2.0:** [VALIDACAO-1.2.0.md](VALIDACAO-1.2.0.md), com os resultados daquela versão.

@@ -37,8 +37,8 @@ android {
         applicationId = "br.com.bebidaspdv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.3.0"
+        versionCode = 7
+        versionName = "1.3.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "FIREBASE_CONFIGURED", file("google-services.json").exists().toString())
     }
@@ -66,7 +66,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
-    implementation("androidx.navigation:navigation-compose:2.9.0")
+    // 2.9.1 fixes singleTop entries stuck in CREATED, which suspends lifecycle-aware UI collectors.
+    implementation("androidx.navigation:navigation-compose:2.9.1")
     // Bundled barcode model: the first scan also works without an internet connection.
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
     implementation("androidx.camera:camera-camera2:1.4.2")
@@ -83,4 +84,9 @@ dependencies {
     implementation("com.google.firebase:firebase-auth")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.05.01"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
